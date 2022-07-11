@@ -1,0 +1,174 @@
+---
+title: "Contextual modulations in low- and high-levels of visual processing hierarchy"
+date: "Apr 15th 2022"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include = FALSE, eval=TRUE, cache = FALSE}
+# Loading packages, defining some default options for code chunks, 
+# and a custom ggplot theme for the graphs.
+
+#library(rstan)
+library(tidyverse)
+library(tidybayes)
+library(magrittr, warn.conflicts = FALSE)
+library(papaja)
+library(knitr)
+library(brms, warn.conflicts = FALSE)
+library(boot)
+library(readxl)
+library(Hmisc, warn.conflicts = FALSE)
+library(modelr)
+library(reshape2, warn.conflicts = FALSE)
+#library(rethinking, warn.conflicts = FALSE)
+library(broom, warn.conflicts = FALSE)
+library(glue)
+library(BayesFactor)
+library(bayestestR)
+library(patchwork)
+
+# ggplot theme 
+muctheme <- theme_classic() +
+  theme(
+    axis.text=element_text(size=20, face="bold"),
+    axis.title=element_text(size=25, face="bold"),
+    strip.text= element_text(size=10),
+    legend.title=element_blank(),
+    #panel.background = element_rect(fill = 'gray96'),
+    #panel.border = element_rect(size = 2),
+    strip.background = element_rect(fill = 'white', color = "white"),
+    #strip.placement = 'outside',
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+# Participant Data
+
+
+
+```{r participant data}
+load("subinfo_active_123rd.rda")
+load("lo_clean123.rda")
+
+
+subj_count <- function(x) x %>% group_by(subject) %>% tally() %>% summarise(n=n())
+```
+
+## Practice Fail/Pass
+```{r Practice data, eval=FALSE}
+practable <- subinfo_active_123rd %>% group_by(Practice) %>% tally()
+practable
+subinfo_active_123rd <- subinfo123rd %>% filter(Practice==1)
+save(subinfo_active_123rd, file="subinfo_active_123rd.rda")
+```
+
+## Sex Distribution
+```{r sex dist, eval=FALSE}
+
+sextable <- lo_clean123 %>% group_by(subject,gender) %>% tally()
+
+sextable %>% group_by(gender) %>% tally()
+
+subinfo_active_123rd$gender <- sextable$gender
+
+```
+
+## Handedness
+
+```{r hand, eval=FALSE}
+handedness <- subinfo_active_123rd %>% mutate(hand = case_when(EHI > 0 ~ "righty",
+                                    EHI < 0 ~ "lefty")) %>% group_by(hand) %>% tally()
+handedness
+```
+
+## Age Distribution
+```{r Age, eval=FALSE}
+load("lo_clean_123rd.rda")
+age <- lo_clean123 %>% group_by(subject,age) %>% tally()
+age2 <- dfl %>% group_by(age) %>% tally() 
+
+
+subinfo_active_123rd$age <- age$age
+
+age %>% ungroup %>%  summarise(mean=mean(age), sd=sd(age))
+
+age %>% ggplot(aes(x = age)) +
+  geom_histogram(binwidth=.5, color="black", fill="grey")+
+  muctheme+
+  geom_vline(aes(xintercept=mean(age)), size=2, color="brown",show.legend=FALSE)
+```
+
+Mean age = `r round(mean(subinfo$age),2)`
+SD = `r round(sd(subinfo$age),2)`
+
+
+## Visual Acuity (FrACT)
+```{r VA, eval=FALSE}
+subinfo_active_123rd%>% ggplot(aes(x = `VA(dec)`)) +
+  geom_histogram(binwidth=.05, color="black", fill="grey")+
+  muctheme+
+  geom_vline(aes(xintercept=mean(`VA(dec)`)), size=2, color="brown",show.legend=FALSE)
+
+meanVA=round(mean(subinfo_active_123rd$`VA(dec)`),2) 
+sdVA=round(sd(subinfo_active_123rd$`VA(dec)`),2)
+```
+
+Mean VA(dec) = `r meanVA`
+SD = `r sdVA`
+
+## BFRT (Benton Face Recognition Task)
+
+```{r Benton, eval=FALSE}
+subinfo_active_123rd %>% ggplot(aes(x = Benton)) +
+  geom_histogram(binwidth=.5, color="black", fill="grey")+
+  muctheme+
+  geom_vline(aes(xintercept=mean(Benton)), size=2, color="brown",show.legend=FALSE)+
+  xlab("BFRT Score")
+```
+
+Mean = `r mean(subinfo_active_123rd$Benton, na.rm=T)`
+SD = `r sd(subinfo_active_123rd$Benton, na.rm=T)`
+
+
+# Model 
+```{r big model fit, eval=FALSE}
+load("d_lohi123.rda")
+
+df <-  d_lohi123
+
+df_trns <- df %>% mutate(iv2= case_when(task=="low"~log10(iv),
+                                        TRUE~iv)) %>%
+  group_by(task) %>%
+  mutate(iv3=(iv2-mean(iv2))/sd(iv2),
+         task=as.factor(task),
+         guess=case_when(task=="low"~1,
+                         task!="low"~0))
+
+fit_invlogit_final <- brm(
+  bf(dv ~ 0.5*guess + (1-0.5*guess)*inv_logit(eta),
+     eta ~ iv3*task*cond + (iv3*task*cond||subject), nl=TRUE),
+  data=df_trns,
+  family=bernoulli("identity"),
+  prior=c(prior(normal(0,5), nlpar="eta"),
+          prior(lognormal(0,.1), nlpar="eta", class="sd", group="subject")),
+  cores=12)
+## This needs to be updated with correct # of iterations, etc..
+save(fit_invlogit_final, file="fit_invlogit_final.rda", compress="xz")
+```
+
+# Data Cleaning
